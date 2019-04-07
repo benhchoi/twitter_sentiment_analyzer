@@ -1,5 +1,6 @@
 import tweepy
 import csv
+import numpy as np
 import pandas as pd
 import sys
 ####input your credentials here
@@ -17,7 +18,7 @@ csvFile = open('data.csv', 'a')
 #Use csv Writer
 csvWriter = csv.writer(csvFile)
 
-for tweet in tweepy.Cursor(api.search,q="#covingtoncatholic",count=10000,
+for tweet in tweepy.Cursor(api.search,q="#NipseyHussle",count=2000,
                            lang="en",
-                           since="2019-01-22").items():
+                           since="2019-04-01").items():
     csvWriter.writerow([tweet.created_at, tweet.text.encode('utf-8')])
