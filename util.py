@@ -3,6 +3,7 @@ import codecs
 import copy
 
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.linear_model import SGDClassifier
@@ -237,3 +238,14 @@ def regression_to_classification(thresholds, regressed_y):
             classified_y.append(1)
 
     return classified_y
+
+
+# make a histogram and save it
+def make_histogram(title, x_label, y_label, arr):
+    plt.title(title)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.hist(arr, 'auto')
+    plt.savefig('%s.jpg' % title)
+    plt.show()
+    plt.clf()
