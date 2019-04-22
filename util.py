@@ -2,9 +2,11 @@ import csv
 import codecs
 import copy
 
+import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.linear_model import SGDClassifier
+from sklearn.svm import SVC, SVR
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.model_selection import KFold
 import nltk
@@ -73,46 +75,57 @@ def generate_x_y(data):
 
 
 # gets the accuracy of predicted y's against the value of true y's
-def get_accuracy(true_y, y):
-    if len(y) != len(true_y):
-        raise('Invalid dimensions, true_y and y do not match')
+def get_accuracy(true_y, pred_y):
+    if len(pred_y) != len(true_y):
+        raise('Invalid dimensions, true_y and pred_y do not match')
 
     total_correct = 0
     for count, output in enumerate(true_y):
-        if output == y[count]:
+        if output == pred_y[count]:
             total_correct += 1
 
-    return total_correct / len(y)
+    return total_correct / len(pred_y)
 
 
-# gets the mean of an array of numbers
-def array_mean(arr):
-    return sum(arr) / len(arr)
-
-
-# create an instance of a stochastic gradient descent classifier
+# create an instance of a classifier
 def generate_classifier(classifier):
     # help on how to do this taken from:
     # https://scikit-learn.org/stable/tutorial/text_analytics/working_with_text_data.html
 
-    if classifier == 'svm':
-        clf = SGDClassifier(loss='hinge', penalty='l2',
-                            alpha=1e-3, random_state=42,
-                            max_iter=5, tol=None)
-    elif classifier == 'naive_bayes':
+    if classifier == 'sgd':
+        clf = SGDClassifier(loss='hinge', penalty='l2')
+    elif classifier == 'svm':
+        clf = SVC(kernel='linear')
+    elif classifier == 'nb':
         clf = MultinomialNB()
     else:
         raise('Specified unsupported classifer')
 
+    tokenizer = nltk.tokenize.TweetTokenizer()
     return Pipeline([
-        ('vect', CountVectorizer(tokenizer=nltk.word_tokenize)),
+        ('vect', CountVectorizer(tokenizer=tokenizer.tokenize)),
         ('tfidf', TfidfTransformer()),
         ('clf', clf)
     ])
 
 
+# create an instance of a regressor
+def generate_regressor(regressor):
+    if regressor == 'svm':
+        reg = SVR(kernel='linear')
+    else:
+        raise('Specified unsupported regressor')
+
+    tokenizer = nltk.tokenize.TweetTokenizer()
+    return Pipeline([
+        ('vect', CountVectorizer(tokenizer=tokenizer.tokenize)),
+        ('tfidf', TfidfTransformer()),
+        ('reg', reg)
+    ])
+
+
 # do a fold-fold cross validation using the specified classifier
-def cross_validate(fold, classifier, X, y):
+def cross_validate(fold, is_classifier, predictor_type, X, y, thresholds=None):
     kf = KFold(fold)
     train_accs = []
     test_accs = []
@@ -123,21 +136,104 @@ def cross_validate(fold, classifier, X, y):
         y_train = [y[index] for index in train_index]
         y_test = [y[index] for index in test_index]
 
-        classifier.fit(x_train, y_train)
-        y_pred_train = classifier.predict(x_train)
-        y_pred_test = classifier.predict(x_test)
+        if is_classifier:
+            predictor = generate_classifier(predictor_type)
+        else:
+            predictor = generate_regressor(predictor_type)
 
-        train_accs.append(get_accuracy(y_train, y_pred_train))
-        test_accs.append(get_accuracy(y_test, y_pred_test))
+        predictor.fit(x_train, y_train)
+        y_pred_train = predictor.predict(x_train)
+        y_pred_test = predictor.predict(x_test)
 
-    return array_mean(train_accs), array_mean(test_accs)
+        if is_classifier:
+            final_y_pred_train = y_pred_train
+            final_y_pred_test = y_pred_test
+        else:
+            final_y_pred_train = regression_to_classification(
+                thresholds, y_pred_train)
+            final_y_pred_test = regression_to_classification(
+                thresholds, y_pred_test)
+
+        train_accs.append(get_accuracy(y_train, final_y_pred_train))
+        test_accs.append(get_accuracy(y_test, final_y_pred_test))
+
+    return np.mean(train_accs), np.mean(test_accs)
 
 
-# adjust the scores to take confidence into account
-# neutral scores might be hurt, bc they remain neutral with 100% confidence
-# hard to account for bc don't know if crowd is stuck between pos/neg
-# whereas can most likely assume unsure polar answers stuck bw polar/neutral
-def adjust_scores(data):
-    adjusted_scores = [[row[0] * row[1], row[2]] for row in data]
+# find which samples the svm struggled with
+def find_errors(data, true_y, pred_y):
+    if len(true_y) != len(pred_y):
+        raise('Invalid dimensions, true_y and pred_y do not match')
 
-    return adjusted_scores
+    errors = []
+    for i, output in enumerate(true_y):
+        prediction = pred_y[i]
+        if output != prediction:
+            row = data[i]
+            errors.append([i, row[2], output, prediction, row[1]])
+
+    return errors
+
+
+def get_error_metrics(true_y, pred_y):
+    if len(true_y) != len(pred_y):
+        raise('Invalid dimensions, true_y and pred_y do not match')
+
+    # format: true value but prediction value
+    # zero but positive, zero but negative
+    # positive but negative, negative but positive
+    # positive but zero, negative but zero
+    zbp, zbn, pbn, pbz, nbp, nbz = 0, 0, 0, 0, 0, 0
+    for i, output in enumerate(true_y):
+        prediction = pred_y[i]
+        if prediction == output:
+            continue
+
+        if output == 0:
+            if prediction == 1:
+                zbp += 1
+            elif prediction == -1:
+                zbn += 1
+        elif output == 1:
+            if prediction == -1:
+                pbn += 1
+            elif prediction == 0:
+                pbz += 1
+        elif output == -1:
+            if prediction == 1:
+                nbp += 1
+            elif prediction == 0:
+                nbz += 1
+
+    return zbp, zbn, pbn, pbz, nbp, nbz
+
+
+# out of all the wrong predictions, check the confidence of the classification
+def check_confidence(data, true_y, pred_y):
+    if len(true_y) != len(pred_y):
+        raise('Invalid dimensions, true_y and pred_y do not match')
+
+    confidences = []
+    for i, output in enumerate(true_y):
+        if output != pred_y[i]:
+            confidences.append(data[i][1])
+
+    return confidences
+
+
+# turns the y's generated by a regression into a classification using the
+# given thresholds
+def regression_to_classification(thresholds, regressed_y):
+    neg_threshold = thresholds[0]
+    pos_threshold = thresholds[1]
+
+    classified_y = []
+    for y in regressed_y:
+        if y < neg_threshold:
+            classified_y.append(-1)
+        elif y < pos_threshold:
+            classified_y.append(0)
+        else:
+            classified_y.append(1)
+
+    return classified_y
