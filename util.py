@@ -67,6 +67,31 @@ def pos_neg_split(data):
     return pos_neg_data
 
 
+# takes in data and separates it by classification
+def pos_neg_neutral_split(data):
+    pos = [row for row in data if row[0] == 1]
+    neg = [row for row in data if row[0] == -1]
+    neutral = [row for row in data if row[0] == 0]
+
+    return pos, neg, neutral
+
+
+# chops off data points such that there's an equal amount of data points for
+# each category
+# tailored to this specific dataset, meaning peg > neutral > pos (in length)
+def chop_data(data):
+    pos, neg, neutral = pos_neg_neutral_split(data)
+
+    neg_indices = np.random.randint(len(neg), size=len(pos))
+    neutral_indices = np.random.randint(len(neutral), size=len(pos))
+
+    chopped_data = pos + [neg[i] for i in neg_indices] + \
+        [neutral[i] for i in neutral_indices]
+    np.random.shuffle(chopped_data)
+
+    return chopped_data
+
+
 # separates the text and the results
 def generate_x_y(data):
     X = [row[2] for row in data]
